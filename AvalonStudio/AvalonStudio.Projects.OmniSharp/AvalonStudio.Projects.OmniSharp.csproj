@@ -16,6 +16,7 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="2.3.1" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="2.3.1" />
     <PackageReference Include="RestSharp.NetCore" Version="105.2.4-rc4-24214-01" />
+    <PackageReference Include="Nuget.Common" Version="4.3.0-preview4" />
   </ItemGroup>
 
   <ItemGroup>    
@@ -32,6 +33,11 @@
 
   <ItemGroup>
     <Folder Include="Roslyn\Editor\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="MSBuild\ProjectFIleInfo.ItemNames.cs" />
+    <None Include="MSBuild\ProjectFileInfo.ProjectData.cs" />
   </ItemGroup>
 
 </Project>

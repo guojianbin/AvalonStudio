@@ -26,6 +26,11 @@ namespace AvalonStudio.Projects.OmniSharp
         private CompositionHost _compositionContext;
         private MefHostServices _host;
 
+        static OmniSharpSolution()
+        {
+            MSBuild.MSBuildEnvironment.Initialize();
+        }
+
         public static async Task<OmniSharpSolution> Create(string path)
         {
             OmniSharpSolution result = new OmniSharpSolution();
@@ -78,13 +83,17 @@ namespace AvalonStudio.Projects.OmniSharp
             {
                 var sln = SolutionFile.Parse(path);
 
+                var solutionDir = Path.GetDirectoryName(path);
+
                 foreach (var project in sln.ProjectsInOrder.Where(p => Path.GetExtension(p.AbsolutePath) == ".csproj"))
                 {
-                    var roslynProject = await Workspace.AddProject(project.AbsolutePath);
+                    var roslynProject = await Workspace.AddProject(solutionDir, project.AbsolutePath);
 
-                    var asProject = OmniSharpProject.Create(roslynProject.Item1, this, project.AbsolutePath, roslynProject.Item2);
+                    var asProject = OmniSharpProject.Create(roslynProject.Item1, this, project.AbsolutePath, roslynProject.Item2);                    
 
                     AddProject(asProject);
+
+                    asProject.LoadFiles();
                 }
 
                 foreach(var project in Projects)
@@ -96,8 +105,6 @@ namespace AvalonStudio.Projects.OmniSharp
 
                     }
 
-                    asProject.LoadFiles();
-
                     foreach (var unresolvedReference in asProject.UnresolvedReferences)
                     {
                          Workspace.ResolveReference(project, unresolvedReference);
@@ -106,7 +113,8 @@ namespace AvalonStudio.Projects.OmniSharp
             }
             else if(Path.GetExtension(path) == ".csproj")
             {
-                var roslynProject = await Workspace.AddProject(path);
+                var solutionDir = Path.GetDirectoryName(path);
+                var roslynProject = await Workspace.AddProject(solutionDir, path);
 
                 var asProject = OmniSharpProject.Create(roslynProject.Item1, this, path, roslynProject.Item2);
 

@@ -4,8 +4,10 @@ using AsyncRpc;
 using AsyncRpc.Transport.Tcp;
 using AvalonStudio.MSBuildHost;
 using AvalonStudio.Platforms;
+using AvalonStudio.Projects.OmniSharp.MSBuild;
 using AvalonStudio.Projects.OmniSharp.Roslyn;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Host.Mef;
 using Microsoft.CodeAnalysis.Text;
@@ -69,20 +71,81 @@ namespace RoslynPad.Roslyn
             return _compositionContext.GetExport<TService>();
         }
 
-        public async Task<Tuple<Project, List<string>>> AddProject(string projectFile)
+        private static CSharpCompilationOptions CreateCompilationOptions(ProjectFileInfo projectFileInfo)
+        {
+            var result = new CSharpCompilationOptions(projectFileInfo.OutputKind);
+
+            result = result.WithAssemblyIdentityComparer(DesktopAssemblyIdentityComparer.Default);
+
+            if (projectFileInfo.AllowUnsafeCode)
+            {
+                result = result.WithAllowUnsafe(true);
+            }
+
+            var specificDiagnosticOptions = new Dictionary<string, ReportDiagnostic>(projectFileInfo.SuppressedDiagnosticIds.Count)
+            {
+                // Ensure that specific warnings about assembly references are always suppressed.
+                { "CS1701", ReportDiagnostic.Suppress },
+                { "CS1702", ReportDiagnostic.Suppress },
+                { "CS1705", ReportDiagnostic.Suppress }
+            };
+
+            if (projectFileInfo.SuppressedDiagnosticIds.Any())
+            {
+                foreach (var id in projectFileInfo.SuppressedDiagnosticIds)
+                {
+                    if (!specificDiagnosticOptions.ContainsKey(id))
+                    {
+                        specificDiagnosticOptions.Add(id, ReportDiagnostic.Suppress);
+                    }
+                }
+            }
+
+            result = result.WithSpecificDiagnosticOptions(specificDiagnosticOptions);
+
+            if (projectFileInfo.SignAssembly && !string.IsNullOrEmpty(projectFileInfo.AssemblyOriginatorKeyFile))
+            {
+                var keyFile = Path.Combine(projectFileInfo.Directory, projectFileInfo.AssemblyOriginatorKeyFile);
+                result = result.WithStrongNameProvider(new DesktopStrongNameProvider())
+                               .WithCryptoKeyFile(keyFile);
+            }
+
+            if (!string.IsNullOrWhiteSpace(projectFileInfo.DocumentationFile))
+            {
+                result = result.WithXmlReferenceResolver(XmlFileResolver.Default);
+            }
+
+            return result;
+        }
+
+        public async Task<Tuple<Project, List<string>>> AddProject(string solutionDirectory, string projectFile)
         {
             var res = await msBuildHostService.GetVersion();
 
-            var assemblyReferences = await msBuildHostService.GetTaskItem("ResolveAssemblyReferences", projectFile);
+            var properties = new List<Property>();
+
+            var targetFrameworks = await msBuildHostService.GetProjectFrameworks(projectFile);
+            var diagnostics = new List<MSBuildDiagnosticsMessage>();
+            var project = ProjectFileInfo.Create(projectFile, solutionDirectory, @"C:\Program Files\dotnet\sdk\2.0.0-preview2-006497\Sdks", null, diagnostics);            
+
+            if (targetFrameworks.Data.Count > 0)
+            {
+                properties.Add(new Property { Key = "TargetFramework", Value = targetFrameworks.Data[0] });
+            }
+
+            var assemblyReferences = await msBuildHostService.GetTaskItem("ResolveAssemblyReferences", projectFile, properties);
             
             var projectReferences = await msBuildHostService.GetProjectReferences(projectFile);
 
-            var id = ProjectId.CreateNewId();
-            OnProjectAdded(ProjectInfo.Create(id, VersionStamp.Create(), Path.GetFileNameWithoutExtension(projectFile), "", LanguageNames.CSharp, projectFile));
+            var compilationOptions = CreateCompilationOptions(project);
+
+            var projectInfo = ProjectInfo.Create(project.Id, VersionStamp.Create(), project.Name, project.AssemblyName, LanguageNames.CSharp, project.FilePath, project.TargetPath, compilationOptions);                                
+
+            OnProjectAdded(projectInfo);
 
             foreach (var reference in assemblyReferences.Data.Items)
             {
-                OnMetadataReferenceAdded(id, MetadataReference.CreateFromFile(reference.ItemSpec));
+                OnMetadataReferenceAdded(projectInfo.Id, MetadataReference.CreateFromFile(reference.ItemSpec));
 
                 foreach(var item in reference.Metadatas)
                 {
@@ -90,7 +153,7 @@ namespace RoslynPad.Roslyn
                 }
             }
 
-            return new Tuple<Project, List<string>>(CurrentSolution.GetProject(id), projectReferences.Data);
+            return new Tuple<Project, List<string>>(CurrentSolution.GetProject(projectInfo.Id), projectReferences.Data);
         }
 
         public ProjectId GetProjectId(AvalonStudio.Projects.IProject project)
